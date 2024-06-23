@@ -13,8 +13,15 @@ import (
 )
 
 // to export data use PascleCase
+
+// request data handling for /api/create_net
 type subnet struct {
 	SubnetCIDR string `json:"subnet"`
+}
+
+// request data handling for /api/launch_client
+type clientIp struct {
+	ClientIp string `json:"clientIp"`
 }
 
 // global_data
@@ -22,11 +29,13 @@ type global_data struct {
 	Directory string
 	CIDR      string
 	IfaceName string
+	ClientIp  string
+	ClientMac string
 }
 
 var GlobalData global_data
 
-// create subnet
+// create docker network and get the bridge interface within that subnet
 func handleSubnetCreation(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var data subnet
@@ -59,7 +68,51 @@ func handleSubnetCreation(w http.ResponseWriter, r *http.Request) {
 		GlobalData.IfaceName = strings.TrimSpace(string(Output))
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		response := map[string]string{"message": "network creation successful with name "}
+		response := map[string]string{"message": "network creation successful with name lb-net"}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+}
+
+// launch the client and get the client mac address
+func handleClientLaunch(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var data clientIp
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("[info] received IP: %s\n", data.ClientIp)
+		GlobalData.ClientIp = strings.TrimSpace(data.ClientIp)
+		// adding the network setup
+		cmd := exec.Command("make", "run_client", fmt.Sprintf("CLIENT_IP=%s", data.ClientIp))
+		cmd.Dir = GlobalData.Directory
+		Output, err := cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to launch client -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] client launched successfully -> [\n %s ]\n", Output)
+
+		// getting client mac address
+		cmd = exec.Command("make", "get_client_mac")
+		cmd.Dir = GlobalData.Directory
+		Output, err = cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to get mac address of client-server -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[info] client-server mac address -> [\n %s ]\n", Output)
+		GlobalData.ClientMac = strings.TrimSpace(string(Output))
+
+		fmt.Printf("%s\n", GlobalData.ClientIp)
+		fmt.Printf("%s\n", GlobalData.ClientMac)
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]string{"message": "client launch successful with name client-server"}
 		json.NewEncoder(w).Encode(response)
 	} else {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
@@ -93,7 +146,7 @@ func main() {
 	// Declare the routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/create_subnet", handleSubnetCreation)
-	// mux.HandleFunc("/api/get_maps", getMapInfo)
+	mux.HandleFunc("/api/launch_client", handleClientLaunch)
 	// mux.HandleFunc("/api/delete_entry",deleteMapData)
 
 	// Setup the CORS origin
