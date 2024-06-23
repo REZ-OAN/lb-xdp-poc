@@ -294,7 +294,31 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAttachXdp(w http.ResponseWriter, r *http.Request) {
-
+	if r.Method == http.MethodGet {
+		// adding the network setup
+		cmd := exec.Command("make", "build_obj")
+		cmd.Dir = GlobalData.Directory
+		_, err := cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to build xdp_lb.c -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] successfully build xdp_lb.c and generate object file xdp_lb.o\n")
+		cmd = exec.Command("make", "attach_xdp_lb", fmt.Sprintf("IFACE=%s", GlobalData.IfaceName))
+		cmd.Dir = GlobalData.Directory
+		_, err = cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to attach xdp_lb.o -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] successfully attached xdp_lb to interface %s\n", GlobalData.IfaceName)
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]string{"message": "xdp_lb attached successfully"}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
 }
 func main() {
 	// -port <port_no>  8080 is set to default

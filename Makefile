@@ -17,6 +17,9 @@ LB_NAME = lb-server
 # server ip default  192.168.0.4
 SERVER_IP ?= 192.168.0.4
 SERVER_NAME = server-backend-$(SERVER_IP)
+
+# interface name  default docker0
+IFACE ?= docker0
 ## NETWORK
 # Docker command to create the network
 create_net:
@@ -110,8 +113,19 @@ remove_servers:
 	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker stop
 	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker rm
 
+## ATTACH XDP
+# build object file
+build_obj:
+	@echo "Building Object file for xdp_lb.c"
+	@clang -O2 -target bpf -g -c ./loadbalancer/xdp/xdp_lb.c -o ./loadbalancer/xdp/xdp_lb.o
+# attaching to the interface
+attach_xdp_lb:
+	@ip link set dev $(IFACE) xdp off
+	@ip link set dev $(IFACE) xdp obj ./loadbalancer/xdp/xdp_lb.o sec xdp
+
 ## REMOVE ALL
 # remove all configs
 remove_all : remove_client remove_lb remove_servers remove_net 
+
 
 .PHONY: create_net get_iface remove_net build_client run_client exec_client remove_client build_lb run_lb exec_lb remove_lb remove_all

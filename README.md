@@ -33,7 +33,7 @@ go generate
 This will generate the necessary files for you.
 
 ## Step-3 (Build The lb-backend Binary)
-Navigate to `lb-backend`. To build execute the following command :
+Navigate to `lb-backend`. To **build** execute the following command :
 ```
 go build
 ```
