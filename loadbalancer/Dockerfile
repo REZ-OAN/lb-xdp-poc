@@ -21,5 +21,4 @@ COPY ./attach_xdp.sh .
 RUN clang -O2 -target bpf -g -c xdp_lb.c -o xdp_lb.o
 
 RUN chmod +x attach_xdp.sh
-
 ENTRYPOINT [ "./attach_xdp.sh" ]

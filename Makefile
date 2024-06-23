@@ -56,7 +56,7 @@ get_client_mac :
 # remove client from the running container
 remove_client:
 	@echo "Removing $(CLIENT_NAME)"
-	@sudo rm -r /sys/fs/bpf/client_mac_map
+	@sudo rm -r /sys/fs/bpf/tc/globals/client_mac_map
 	@docker stop $(CLIENT_NAME)
 	@docker rm $(CLIENT_NAME)
 
@@ -73,7 +73,7 @@ exec_lb :
 # run the load-balancer on specific network and ip
 run_lb :
 	@echo "Launching Load-Balancer On This IP $(LB_IP) and Network $(NETWORK_NAME) with name $(LB_NAME)"
-	@docker run -d -it  --privileged --net $(NETWORK_NAME) --ip $(LB_IP) --name $(LB_NAME) lb
+	@docker run -d -it  --privileged -v /sys/fs/bpf:/sys/fs/bpf --net $(NETWORK_NAME) --ip $(LB_IP)  --name $(LB_NAME) lb
 
 # get the load-balancer mac address
 get_lb_mac :
@@ -82,7 +82,7 @@ get_lb_mac :
 # remove load-balancer from the running container
 remove_lb:
 	@echo "Removing $(LB_NAME)"
-	@sudo rm -f /sys/fs/bpf/lb_mac_map
+	@sudo rm -f /sys/fs/bpf/tc/globals/lb_mac_map
 	@docker stop $(LB_NAME)
 	@docker rm $(LB_NAME)
 
@@ -108,8 +108,8 @@ get_server_mac :
 # remove load-balancer from the running container
 remove_servers:
 	@echo "Removing Servers"
-	@sudo rm -f /sys/fs/bpf/backend_server_map
-	@sudo rm -f /sys/fs/bpf/bs_map_size_map
+	@sudo rm -f /sys/fs/bpf/tc/globals/backend_server_map
+	@sudo rm -f /sys/fs/bpf/tc/globals/bs_map_size_map
 	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker stop
 	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker rm
 
@@ -117,11 +117,11 @@ remove_servers:
 # build object file
 build_obj:
 	@echo "Building Object file for xdp_lb.c"
-	@clang -O2 -target bpf -g -c ./loadbalancer/xdp/xdp_lb.c -o ./loadbalancer/xdp/xdp_lb.o
+	@sudo clang -O2 -target bpf -g -c ./loadbalancer/xdp/xdp_lb.c -o ./loadbalancer/xdp/xdp_lb.o
 # attaching to the interface
 attach_xdp_lb:
-	@ip link set dev $(IFACE) xdp off
-	@ip link set dev $(IFACE) xdp obj ./loadbalancer/xdp/xdp_lb.o sec xdp
+	@sudo ip link set dev $(IFACE) xdp off
+	@sudo ip link set dev $(IFACE) xdp obj ./loadbalancer/xdp/xdp_lb.o sec xdp
 
 ## REMOVE ALL
 # remove all configs

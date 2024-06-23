@@ -1,4 +1,4 @@
-// added only the maps
+// added all logic
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/in.h>
@@ -21,9 +21,9 @@ struct ip_mac {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 256);
+    __uint(max_entries, 1);
     __type(key, __u32);
-    __type(value, struct mac_addr);
+    __type(value, struct ip_mac);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } client_mac_map SEC(".maps");
 
@@ -31,7 +31,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1);
     __type(key, __u32);
-    __type(value, struct mac_addr);
+    __type(value, struct ip_mac);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } lb_mac_map SEC(".maps");
 
@@ -46,8 +46,8 @@ struct {
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1);
-    __type(key, unsigned int);
-    __type(value, unsigned int);
+    __type(key, __u32);
+    __type(value,__u32);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } bs_map_size_map SEC(".maps");
 
@@ -69,61 +69,99 @@ static __always_inline __u16 iph_csum(struct iphdr *iph)
     return csum_fold_helper(csum);
 }
 
-unsigned int backend_server_index = 0;
+__u32 backend_server_index = 0;
 
 SEC("xdp")
 int xdp_load_balancer(struct xdp_md *ctx)
 {
-    // void *data_end = (void *)(long)ctx->data_end;
-    // void *data = (void *)(long)ctx->data;
-    // struct ethhdr *eth = data;
+
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    struct ethhdr *eth = data;
     
-    // if ((void *)(eth + 1) > data_end) {
-    //     return XDP_ABORTED;
-    // }
+    if ((void *)(eth + 1) > data_end) {
+        bpf_printk("XDP_ABORTED: Invalid eth pointer\n");
+        return XDP_ABORTED;
+    }
 
-    // if (eth->h_proto != bpf_htons(ETH_P_IP)) {
-    //     return XDP_PASS;
-    // }
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) {
+        return XDP_PASS;
+    }
 
-    // struct iphdr *iph = data + sizeof(struct ethhdr);
-    // if ((void *)(iph + 1) > data_end) {
-    //     return XDP_ABORTED;
-    // }
+    struct iphdr *iph = data + sizeof(struct ethhdr);
+    if ((void *)(iph + 1) > data_end) {
+        bpf_printk("XDP_ABORTED: Invalid iph pointer\n");
+        return XDP_ABORTED;
+    }
 
-    // if (iph->protocol != IPPROTO_TCP) {
-    //     return XDP_PASS;
-    // }
+    if (iph->protocol != IPPROTO_TCP) {
+        return XDP_PASS;
+    }
 
-    // struct tcphdr *tcph = (void *)iph + sizeof(*iph);
-    // if ((void *)(tcph + 1) > data_end) {
-    //     return XDP_ABORTED;
-    // }
+    struct tcphdr *tcph = (void *)iph + sizeof(*iph);
+    if ((void *)(tcph + 1) > data_end) {
+        bpf_printk("XDP_ABORTED: Invalid tcph pointer\n");
+        return XDP_ABORTED;
+    }
 
-    // if (iph->saddr == client_ip) {
-    //     // Client to backend
-    //     bpf_printk("Client to Backend - Index: %d\n", backend_server_index);
+    __u32 size_key = 0;
+    __u32 *backend_map_size = bpf_map_lookup_elem(&bs_map_size_map, &size_key);
 
-    //     if (backend_server_index < sizeof(server_mac) / ETH_ALEN) {
-    //         __builtin_memcpy(eth->h_dest, server_mac[backend_server_index], ETH_ALEN);
-    //         iph->daddr = server_ip[backend_server_index];
-    //         backend_server_index = (backend_server_index + 1) % (sizeof(server_mac) / ETH_ALEN);
-    //     }
-    // } else {
-    //     // Backend to client
-    //     bpf_printk("Backend to Client\n");
+    if (!backend_map_size) {
+        bpf_printk("XDP_ABORTED: backend_map_size is NULL\n");
+        return XDP_ABORTED;
+    }
 
-    //     __builtin_memcpy(eth->h_dest, client_mac, ETH_ALEN);
-    //     iph->daddr = client_ip;
-    // }
+    __u32 key = 0;
+    struct ip_mac *client_ip_mac = bpf_map_lookup_elem(&client_mac_map, &key);
 
-    // __builtin_memcpy(eth->h_source, load_balancer_mac, ETH_ALEN);
-    // iph->saddr = load_balancer_ip;
+    if (!client_ip_mac) {
+        bpf_printk("XDP_ABORTED: client_ip_mac is NULL\n");
+        return XDP_ABORTED;
+    }
 
-    // // Recompute IP checksum
-    // iph->check = iph_csum(iph);
+    if (iph->saddr == client_ip_mac->ip) {
+        // Client to backend
+        bpf_printk("Client to Backend - Index: %d\n", backend_server_index);
 
-    return XDP_PASS;
+        if (backend_server_index < *backend_map_size) {
+            struct ip_mac *server_ip_mac = bpf_map_lookup_elem(&backend_server_map, &backend_server_index);
+            if (server_ip_mac) {
+                __builtin_memcpy(eth->h_dest, server_ip_mac->mac.addr, ETH_ALEN);
+                iph->daddr = server_ip_mac->ip;
+                backend_server_index = (backend_server_index + 1) % (*backend_map_size);
+            } else {
+                bpf_printk("XDP_ABORTED: server_ip_mac is NULL\n");
+                return XDP_ABORTED;
+            }
+        } else {
+            bpf_printk("XDP_ABORTED: Invalid backend_server_index\n");
+            return XDP_ABORTED;
+        }
+    } else {
+        bpf_printk("Backend to Client\n");
+        struct ip_mac *client_ip_mac2 = bpf_map_lookup_elem(&client_mac_map, &key);
+        if(client_ip_mac2){
+        __builtin_memcpy(eth->h_dest, client_ip_mac->mac.addr, ETH_ALEN);
+        iph->daddr = client_ip_mac->ip;
+        }else {
+            bpf_printk("client not found\n");
+        }
+    }
+
+    struct ip_mac *lb_ip_mac = bpf_map_lookup_elem(&lb_mac_map, &key);
+    if (lb_ip_mac) {
+        __builtin_memcpy(eth->h_source, lb_ip_mac->mac.addr, ETH_ALEN);
+        iph->saddr = lb_ip_mac->ip;
+    } else {
+        bpf_printk("XDP_ABORTED: lb_ip_mac is NULL\n");
+        return XDP_ABORTED;
+    }
+
+    // Recompute IP checksum
+    iph->check = iph_csum(iph);
+    
+    return XDP_TX;
 }
 
 char _license[] SEC("license") = "GPL";

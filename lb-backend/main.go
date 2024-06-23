@@ -1,13 +1,14 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"unsafe"
 
@@ -59,20 +60,41 @@ type global_data struct {
 var GlobalData global_data
 
 // parseMAC parses a MAC address string and returns an EthAddr.
-func parseMAC(macStr string) (MacAddr, error) {
-	var ethAddr MacAddr
-	mac, err := net.ParseMAC(macStr)
-	if err != nil {
-		return ethAddr, err
+func parseMAC(macStr string) MacAddr {
+	// Split the MAC address string by ":"
+	parts := strings.Split(macStr, ":")
+
+	// Initialize a byte slice of length 6
+	var macAddress MacAddr
+
+	// Convert each part from hexadecimal string to byte
+	for i := 0; i < 6; i++ {
+		b, err := hex.DecodeString(parts[i])
+		if err != nil {
+			fmt.Printf("[error] error decoding MAC address: %v\n", err)
+
+		}
+		macAddress.Addr[i] = b[0]
 	}
-	copy(ethAddr.Addr[:], mac)
-	return ethAddr, nil
+
+	return macAddress
 }
 
 // parseIP parses an IP address string and returns it as a uint32.
 func parseIP(ipStr string) uint32 {
-	ip := net.ParseIP(ipStr).To4()
-	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
+	// Split IP address into octets
+	parts := strings.Split(ipStr, ".")
+
+	// Convert octets to integers
+	var ip uint32
+	for i := 0; i < 4; i++ {
+		octet, _ := strconv.Atoi(parts[i])
+		if octet < 0 || octet > 255 {
+			fmt.Printf("Invalid octet value: %s\n", parts[i])
+		}
+		ip |= uint32(octet) << (uint(i) * 8)
+	}
+	return ip
 }
 
 // create docker network and get the bridge interface within that subnet
@@ -149,14 +171,14 @@ func handleClientLaunch(w http.ResponseWriter, r *http.Request) {
 		GlobalData.ClientMac = strings.TrimSpace(string(Output))
 
 		parsedIp := parseIP(GlobalData.ClientIp)
-		parsedMac, err := parseMAC(GlobalData.ClientMac)
-
-		if err != nil {
-			fmt.Printf("[error] failed to parse mac address into bytes -> [\n %s ]\n", err)
-		}
+		parsedMac := parseMAC(GlobalData.ClientMac)
+		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
+		fmt.Printf("parsedIp : %d\n", parsedIp)
+		fmt.Printf("parsedMac: %v\n", parsedMac)
 
 		clientMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.ClientMacMap
-		if err := clientMacMap.Update(unsafe.Pointer(&parsedIp), unsafe.Pointer(&parsedMac), ebpf.UpdateAny); err != nil {
+		key := uint32(0)
+		if err := clientMacMap.Update(unsafe.Pointer(&key), unsafe.Pointer(&ipMac), ebpf.UpdateAny); err != nil {
 			fmt.Printf("[error] client_mac_map update failed -> [\n %s ]\n", err)
 			return
 		}
@@ -204,14 +226,14 @@ func handleLbLaunch(w http.ResponseWriter, r *http.Request) {
 		GlobalData.LbMac = strings.TrimSpace(string(Output))
 
 		parsedIp := parseIP(GlobalData.LbIp)
-		parsedMac, err := parseMAC(GlobalData.LbMac)
-		fmt.Printf("%d", parsedIp)
-		if err != nil {
-			fmt.Printf("[error] failed to parse mac address into bytes -> [\n %s ]\n", err)
-		}
+		parsedMac := parseMAC(GlobalData.LbMac)
+		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
+		fmt.Printf("parsedIp : %d\n", parsedIp)
+		fmt.Printf("parsedMac: %v\n", parsedMac)
 
 		lbMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.LbMacMap
-		if err := lbMacMap.Update(unsafe.Pointer(&parsedIp), unsafe.Pointer(&parsedMac), ebpf.UpdateAny); err != nil {
+		key := uint32(0)
+		if err := lbMacMap.Update(unsafe.Pointer(&key), unsafe.Pointer(&ipMac), ebpf.UpdateAny); err != nil {
 			fmt.Printf("[error] lb_mac_map update failed -> [\n %s ]\n", err)
 			return
 		}
@@ -257,15 +279,15 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[info] server-backend mac address -> [\n %s ]\n", Output)
 
 		parsedIp := parseIP(strings.TrimSpace(data.IP))
-		parsedMac, err := parseMAC(strings.TrimSpace(string(Output)))
+		parsedMac := parseMAC(strings.TrimSpace(string(Output)))
 		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
-		if err != nil {
-			fmt.Printf("[error] failed to parse mac address into bytes -> [\n %s ]\n", err)
-		}
+		fmt.Printf("parsedIp : %d\n", parsedIp)
+		fmt.Printf("parsedMac: %v\n", parsedMac)
+
 		// get the current size
 		size_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
-		var size uint
-		key := uint(0)
+		var size uint32
+		key := uint32(0)
 		if err := size_map.Lookup(unsafe.Pointer(&key), unsafe.Pointer(&size)); err != nil {
 			fmt.Printf("[error] failed to read the bs_map_size_map -> [\n %s ]\n", err)
 			return
@@ -276,7 +298,7 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// update the size
-		size += uint(1)
+		size += uint32(1)
 
 		if err := size_map.Update(unsafe.Pointer(&key), unsafe.Pointer(&size), ebpf.UpdateAny); err != nil {
 			fmt.Printf("[error] bbs_map_size_map update failed -> [\n %s ]\n", err)
@@ -347,7 +369,7 @@ func main() {
 
 	// loading the ebpf and set the pin path
 	var objs xdp_lbObjects
-	if err := loadXdp_lbObjects(&objs, &ebpf.CollectionOptions{Maps: ebpf.MapOptions{PinPath: "/sys/fs/bpf/"}}); err != nil {
+	if err := loadXdp_lbObjects(&objs, &ebpf.CollectionOptions{Maps: ebpf.MapOptions{PinPath: "/sys/fs/bpf/tc/globals"}}); err != nil {
 		fmt.Printf("[error] failed loading eBPF objects: %v", err)
 		return
 	}
@@ -357,8 +379,8 @@ func main() {
 	GlobalData.Xdp_ProgObj = &objs
 
 	bsMapSizeMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
-	key := uint(0)
-	size := uint(0)
+	key := uint32(0)
+	size := uint32(0)
 	if err := bsMapSizeMap.Update(unsafe.Pointer(&key), unsafe.Pointer(&size), ebpf.UpdateAny); err != nil {
 		fmt.Printf("[error] failed to initialize size for the backend_server_map -> [\n %s ]\n", err)
 		return
