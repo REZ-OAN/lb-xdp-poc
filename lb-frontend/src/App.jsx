@@ -21,7 +21,7 @@ const App = () => {
   const handleClientIp = async (e)=>{
     e.preventDefault();
     const data = {
-      clientIp,
+      ip:clientIp,
     };
     const headers = {
       'Content-Type':'application/json',
@@ -32,6 +32,15 @@ const App = () => {
   };
   const handleLbIp = async (e) => {
     e.preventDefault();
+    const data = {
+      ip:lbIp,
+    };
+    const headers = {
+      'Content-Type':'application/json',
+    }
+    const url = "http://localhost:8080/api/launch_lb";
+    const res = await axios.post(url,data,{headers});
+    console.log(res.data);
   };
 
   const handleServerIp = async (e) => {

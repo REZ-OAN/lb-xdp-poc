@@ -20,8 +20,8 @@ type subnet struct {
 }
 
 // request data handling for /api/launch_client
-type clientIp struct {
-	ClientIp string `json:"clientIp"`
+type ip struct {
+	IP string `json:"ip"`
 }
 
 // global_data
@@ -31,6 +31,8 @@ type global_data struct {
 	IfaceName string
 	ClientIp  string
 	ClientMac string
+	LbIp      string
+	LbMac     string
 }
 
 var GlobalData global_data
@@ -78,17 +80,17 @@ func handleSubnetCreation(w http.ResponseWriter, r *http.Request) {
 // launch the client and get the client mac address
 func handleClientLaunch(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
-		var data clientIp
+		var data ip
 		err := json.NewDecoder(r.Body).Decode(&data)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		fmt.Printf("[info] received IP: %s\n", data.ClientIp)
-		GlobalData.ClientIp = strings.TrimSpace(data.ClientIp)
+		fmt.Printf("[info] received IP: %s\n", data.IP)
+		GlobalData.ClientIp = strings.TrimSpace(data.IP)
 		// adding the network setup
-		cmd := exec.Command("make", "run_client", fmt.Sprintf("CLIENT_IP=%s", data.ClientIp))
+		cmd := exec.Command("make", "run_client", fmt.Sprintf("CLIENT_IP=%s", data.IP))
 		cmd.Dir = GlobalData.Directory
 		Output, err := cmd.Output()
 		if err != nil {
@@ -113,6 +115,50 @@ func handleClientLaunch(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]string{"message": "client launch successful with name client-server"}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+}
+
+// launch the load-balancer server and the load-balancer server mac address
+func handleLbLaunch(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var data ip
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("[info] received IP: %s\n", data.IP)
+		GlobalData.LbIp = strings.TrimSpace(data.IP)
+		// adding the network setup
+		cmd := exec.Command("make", "run_lb", fmt.Sprintf("LB_IP=%s", data.IP))
+		cmd.Dir = GlobalData.Directory
+		Output, err := cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to launch load-balancer -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] load-balancer launched successfully -> [\n %s ]\n", Output)
+
+		// getting client mac address
+		cmd = exec.Command("make", "get_lb_mac")
+		cmd.Dir = GlobalData.Directory
+		Output, err = cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to get mac address of lb-server -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[info] lb-server mac address -> [\n %s ]\n", Output)
+		GlobalData.LbMac = strings.TrimSpace(string(Output))
+
+		fmt.Printf("%s\n", GlobalData.LbIp)
+		fmt.Printf("%s\n", GlobalData.LbMac)
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]string{"message": "loadbalancer launch successful with name lb-server"}
 		json.NewEncoder(w).Encode(response)
 	} else {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
@@ -147,7 +193,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/create_subnet", handleSubnetCreation)
 	mux.HandleFunc("/api/launch_client", handleClientLaunch)
-	// mux.HandleFunc("/api/delete_entry",deleteMapData)
+	mux.HandleFunc("/api/launch_lb", handleLbLaunch)
 
 	// Setup the CORS origin
 	c := cors.New(cors.Options{

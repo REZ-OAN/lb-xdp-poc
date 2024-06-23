@@ -9,6 +9,12 @@ NETWORK_NAME = lb-net
 # client ip default 192.168.0.3
 CLIENT_IP ?= 192.168.0.3
 CLIENT_NAME = client-server
+
+# loadbalancer ip default 192.168.0.5
+LB_IP ?= 192.168.0.5
+LB_NAME = lb-server
+
+## NETWORK
 # Docker command to create the network
 create_net:
 	@echo "Creating Docker network with CIDR $(CIDR) and name $(NETWORK_NAME)"
@@ -23,6 +29,7 @@ remove_net:
 	@echo "Removing Docker Network $(NETWORK_NAME)"
 	@docker network rm -f $(NETWORK_NAME)
 
+## CLIENT
 # build client image
 build_client:
 	@echo "Building Client Image"
@@ -46,8 +53,34 @@ remove_client:
 	@docker stop $(CLIENT_NAME)
 	@docker rm $(CLIENT_NAME)
 
+## LOADBALANCER
+# build load-balancer image
+build_lb:
+	@echo "Building Load-Balancer Image"
+	@docker build -t lb ./loadbalancer
+
+# exec to the container of load-balancer
+exec_lb :
+	@docker exec -it $(LB_NAME) bash
+
+# run the load-balancer on specific network and ip
+run_lb :
+	@echo "Launching Load-Balancer On This IP $(LB_IP) and Network $(NETWORK_NAME) with name $(LB_NAME)"
+	@docker run -d -it  --privileged --net $(NETWORK_NAME) --ip $(LB_IP) --name $(LB_NAME) lb
+
+# get the load-balancer mac address
+get_lb_mac :
+	@docker inspect $(LB_NAME) | jq -r '.[0].NetworkSettings.Networks.[].MacAddress'
+
+# remove load-balancer from the running container
+remove_lb:
+	@echo "Removing $(LB_NAME)"
+	@docker stop $(LB_NAME)
+	@docker rm $(LB_NAME)
+
+## REMOVE ALL
 # remove all configs
-remove_all : remove_client remove_net
+remove_all : remove_client remove_lb remove_net 
 
 
-.PHONY: create_net get_iface remove_net build_client run_client exec_client
+.PHONY: create_net get_iface remove_net build_client run_client exec_client remove_client build_lb run_lb exec_lb remove_lb remove_all

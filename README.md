@@ -9,9 +9,13 @@
  - [Install necessary tools to run eBPF code]()
 
 ## Step-1 (Build Necessary Images)
+Navigate to the `lb-xdp-poc` directory (**root** directory for the application)
 
  - For CLIENT-SERVER
 ```
-# navigate to the lb-xdp-poc directory (root directory for the application)
 make build_client
 ```
+ - For LOADBALANCER-SERVER
+ ```
+ make build_lb
+ ```
