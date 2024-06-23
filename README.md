@@ -19,3 +19,7 @@ make build_client
  ```
  make build_lb
  ```
+ - For SERVER-BACKEND
+```
+make build_server
+```

@@ -14,6 +14,9 @@ CLIENT_NAME = client-server
 LB_IP ?= 192.168.0.5
 LB_NAME = lb-server
 
+# server ip default  192.168.0.4
+SERVER_IP ?= 192.168.0.4
+SERVER_NAME = server-backend-$(SERVER_IP)
 ## NETWORK
 # Docker command to create the network
 create_net:
@@ -78,9 +81,33 @@ remove_lb:
 	@docker stop $(LB_NAME)
 	@docker rm $(LB_NAME)
 
+## SERVER
+# build server image
+build_server:
+	@echo "Building Server Image"
+	@docker build -t server ./server
+
+# exec to the container of server
+exec_server :
+	@docker exec -it $(SERVER_NAME) bash
+
+# run the server on specific network and ip
+run_server :
+	@echo "Launching Server On This IP $(SERVER_IP) and Network $(NETWORK_NAME) with name $(SERVER_NAME)"
+	@docker run -d -it --net $(NETWORK_NAME) --ip $(SERVER_IP) --name $(SERVER_NAME) server
+
+# get the load-balancer mac address
+get_server_mac :
+	@docker inspect $(SERVER_NAME) | jq -r '.[0].NetworkSettings.Networks.[].MacAddress'
+
+# remove load-balancer from the running container
+remove_servers:
+	@echo "Removing Servers"
+	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker stop
+	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker rm
+
 ## REMOVE ALL
 # remove all configs
-remove_all : remove_client remove_lb remove_net 
-
+remove_all : remove_client remove_lb remove_servers remove_net 
 
 .PHONY: create_net get_iface remove_net build_client run_client exec_client remove_client build_lb run_lb exec_lb remove_lb remove_all

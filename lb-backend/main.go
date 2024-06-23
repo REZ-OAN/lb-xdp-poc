@@ -165,6 +165,46 @@ func handleLbLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// launch the server and get the server mac address
+func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		var data ip
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		fmt.Printf("[info] received IP: %s\n", data.IP)
+		// adding the network setup
+		cmd := exec.Command("make", "run_server", fmt.Sprintf("SERVER_IP=%s", data.IP))
+		cmd.Dir = GlobalData.Directory
+		Output, err := cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to launch server -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] server launched successfully -> [\n %s ]\n", Output)
+
+		// getting client mac address
+		cmd = exec.Command("make", "get_server_mac", fmt.Sprintf("SERVER_IP=%s", data.IP))
+		cmd.Dir = GlobalData.Directory
+		Output, err = cmd.Output()
+		if err != nil {
+			fmt.Printf("[error] failed to get mac address of server-backend -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[info] server-backend mac address -> [\n %s ]\n", Output)
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]string{"message": "server launch successful with name server-backend"}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	}
+}
+
 func main() {
 	// -port <port_no>  8080 is set to default
 	port := flag.Int("port", 8080, "port to listen on")
@@ -194,7 +234,7 @@ func main() {
 	mux.HandleFunc("/api/create_subnet", handleSubnetCreation)
 	mux.HandleFunc("/api/launch_client", handleClientLaunch)
 	mux.HandleFunc("/api/launch_lb", handleLbLaunch)
-
+	mux.HandleFunc("/api/launch_server", handleServerLaunch)
 	// Setup the CORS origin
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},

@@ -42,9 +42,17 @@ const App = () => {
     const res = await axios.post(url,data,{headers});
     console.log(res.data);
   };
-
   const handleServerIp = async (e) => {
     e.preventDefault();
+    const data = {
+      ip:serverIp,
+    };
+    const headers = {
+      'Content-Type':'application/json',
+    }
+    const url = "http://localhost:8080/api/launch_server";
+    const res = await axios.post(url,data,{headers});
+    console.log(res.data);
   };
 
   useEffect(()=>{
@@ -75,7 +83,7 @@ const App = () => {
             <div className='server-input'>
               <label>SERVER IP </label>
               <input type="text" value={serverIp} onChange={(e)=>{setServerIp(e.target.value)}}></input>
-              <button onClick={(e)=> handleLbIp(e)}>Launch Server</button>
+              <button onClick={(e)=> handleServerIp(e)}>Launch Server</button>
             </div>
           </div>
           <div className='right-panel'>
