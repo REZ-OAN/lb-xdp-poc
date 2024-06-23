@@ -53,6 +53,7 @@ get_client_mac :
 # remove client from the running container
 remove_client:
 	@echo "Removing $(CLIENT_NAME)"
+	@sudo rm -r /sys/fs/bpf/client_mac_map
 	@docker stop $(CLIENT_NAME)
 	@docker rm $(CLIENT_NAME)
 
@@ -78,6 +79,7 @@ get_lb_mac :
 # remove load-balancer from the running container
 remove_lb:
 	@echo "Removing $(LB_NAME)"
+	@sudo rm -f /sys/fs/bpf/lb_mac_map
 	@docker stop $(LB_NAME)
 	@docker rm $(LB_NAME)
 
@@ -103,6 +105,8 @@ get_server_mac :
 # remove load-balancer from the running container
 remove_servers:
 	@echo "Removing Servers"
+	@sudo rm -f /sys/fs/bpf/backend_server_map
+	@sudo rm -f /sys/fs/bpf/bs_map_size_map
 	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker stop
 	@docker ps -a --filter "name=server-" --format "{{.ID}}" | xargs -r docker rm
 

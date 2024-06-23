@@ -54,7 +54,12 @@ const App = () => {
     const res = await axios.post(url,data,{headers});
     console.log(res.data);
   };
-
+  const handleAttachXdp = async (e)=>{
+    e.preventDefault();
+    const url = "http://localhost:8080/api/attach_xdp";
+    const res = await axios.get(url);
+    console.log(res.data);
+  }
   useEffect(()=>{
     const fetchInfo = async ()=> {
       console.log("fetching_data...");
@@ -84,6 +89,9 @@ const App = () => {
               <label>SERVER IP </label>
               <input type="text" value={serverIp} onChange={(e)=>{setServerIp(e.target.value)}}></input>
               <button onClick={(e)=> handleServerIp(e)}>Launch Server</button>
+            </div>
+            <div className='attach-xdp'>
+              <button onClick={(e)=> handleAttachXdp(e)}>Attach XDP</button>
             </div>
           </div>
           <div className='right-panel'>

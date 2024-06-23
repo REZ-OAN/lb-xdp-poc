@@ -23,3 +23,22 @@ make build_client
 ```
 make build_server
 ```
+## Step-2 (Generate Necessary Files using bpf2go)
+To interact with **bpf_maps** we have to convert the `bpf` code into go and object file.`github.com/cilium/ebpf/cmd/bpf2go` this module helps us to do this.Navigate to `lb-backend`.
+
+To generate execute the following command : 
+```
+go generate
+```
+This will generate the necessary files for you.
+
+## Step-3 (Build The lb-backend Binary)
+Navigate to `lb-backend`. To build execute the following command :
+```
+go build
+```
+## Step-4 (Install The Necessary Packages)
+Navigate to `lb-frontend`. To **install** necessary packages execute the following command:
+```
+npm i
+```

@@ -4,13 +4,18 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"unsafe"
 
+	"github.com/cilium/ebpf"
 	"github.com/rs/cors"
 )
+
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go xdp_lb ../loadbalancer/xdp/xdp_lb.c
 
 // to export data use PascleCase
 
@@ -24,18 +29,51 @@ type ip struct {
 	IP string `json:"ip"`
 }
 
+// mac len
+const (
+	ETH_ALEN = 6
+)
+
+// mac address
+type MacAddr struct {
+	Addr [ETH_ALEN]byte
+}
+
+type IpMac struct {
+	Ip  uint32
+	Mac MacAddr
+}
+
 // global_data
 type global_data struct {
-	Directory string
-	CIDR      string
-	IfaceName string
-	ClientIp  string
-	ClientMac string
-	LbIp      string
-	LbMac     string
+	Directory   string
+	CIDR        string
+	IfaceName   string
+	ClientIp    string
+	ClientMac   string
+	LbIp        string
+	LbMac       string
+	Xdp_ProgObj *xdp_lbObjects
 }
 
 var GlobalData global_data
+
+// parseMAC parses a MAC address string and returns an EthAddr.
+func parseMAC(macStr string) (MacAddr, error) {
+	var ethAddr MacAddr
+	mac, err := net.ParseMAC(macStr)
+	if err != nil {
+		return ethAddr, err
+	}
+	copy(ethAddr.Addr[:], mac)
+	return ethAddr, nil
+}
+
+// parseIP parses an IP address string and returns it as a uint32.
+func parseIP(ipStr string) uint32 {
+	ip := net.ParseIP(ipStr).To4()
+	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
+}
 
 // create docker network and get the bridge interface within that subnet
 func handleSubnetCreation(w http.ResponseWriter, r *http.Request) {
@@ -110,8 +148,19 @@ func handleClientLaunch(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[info] client-server mac address -> [\n %s ]\n", Output)
 		GlobalData.ClientMac = strings.TrimSpace(string(Output))
 
-		fmt.Printf("%s\n", GlobalData.ClientIp)
-		fmt.Printf("%s\n", GlobalData.ClientMac)
+		parsedIp := parseIP(GlobalData.ClientIp)
+		parsedMac, err := parseMAC(GlobalData.ClientMac)
+
+		if err != nil {
+			fmt.Printf("[error] failed to parse mac address into bytes -> [\n %s ]\n", err)
+		}
+
+		clientMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.ClientMacMap
+		if err := clientMacMap.Update(unsafe.Pointer(&parsedIp), unsafe.Pointer(&parsedMac), ebpf.UpdateAny); err != nil {
+			fmt.Printf("[error] client_mac_map update failed -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] client_mac_map update successfull\n")
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]string{"message": "client launch successful with name client-server"}
@@ -154,8 +203,19 @@ func handleLbLaunch(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[info] lb-server mac address -> [\n %s ]\n", Output)
 		GlobalData.LbMac = strings.TrimSpace(string(Output))
 
-		fmt.Printf("%s\n", GlobalData.LbIp)
-		fmt.Printf("%s\n", GlobalData.LbMac)
+		parsedIp := parseIP(GlobalData.LbIp)
+		parsedMac, err := parseMAC(GlobalData.LbMac)
+		fmt.Printf("%d", parsedIp)
+		if err != nil {
+			fmt.Printf("[error] failed to parse mac address into bytes -> [\n %s ]\n", err)
+		}
+
+		lbMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.LbMacMap
+		if err := lbMacMap.Update(unsafe.Pointer(&parsedIp), unsafe.Pointer(&parsedMac), ebpf.UpdateAny); err != nil {
+			fmt.Printf("[error] lb_mac_map update failed -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] lb_mac_map update successfull\n")
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]string{"message": "loadbalancer launch successful with name lb-server"}
@@ -196,6 +256,34 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Printf("[info] server-backend mac address -> [\n %s ]\n", Output)
 
+		parsedIp := parseIP(strings.TrimSpace(data.IP))
+		parsedMac, err := parseMAC(strings.TrimSpace(string(Output)))
+		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
+		if err != nil {
+			fmt.Printf("[error] failed to parse mac address into bytes -> [\n %s ]\n", err)
+		}
+		// get the current size
+		size_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
+		var size uint
+		key := uint(0)
+		if err := size_map.Lookup(unsafe.Pointer(&key), unsafe.Pointer(&size)); err != nil {
+			fmt.Printf("[error] failed to read the bs_map_size_map -> [\n %s ]\n", err)
+			return
+		}
+		backendServerMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.BackendServerMap
+		if err := backendServerMacMap.Update(unsafe.Pointer(&size), unsafe.Pointer(&ipMac), ebpf.UpdateAny); err != nil {
+			fmt.Printf("[error] backend_server_map update failed -> [\n %s ]\n", err)
+			return
+		}
+		// update the size
+		size += uint(1)
+
+		if err := size_map.Update(unsafe.Pointer(&key), unsafe.Pointer(&size), ebpf.UpdateAny); err != nil {
+			fmt.Printf("[error] bbs_map_size_map update failed -> [\n %s ]\n", err)
+			return
+		}
+		fmt.Printf("[success] backend_server_map update successfull\n")
+		fmt.Printf("[info] total server-backend launched %d\n", size)
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]string{"message": "server launch successful with name server-backend"}
@@ -205,6 +293,9 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleAttachXdp(w http.ResponseWriter, r *http.Request) {
+
+}
 func main() {
 	// -port <port_no>  8080 is set to default
 	port := flag.Int("port", 8080, "port to listen on")
@@ -229,12 +320,33 @@ func main() {
 
 	fmt.Printf("[info]  app_root_path %s\n", appRoot)
 	GlobalData.Directory = appRoot
+
+	// loading the ebpf and set the pin path
+	var objs xdp_lbObjects
+	if err := loadXdp_lbObjects(&objs, &ebpf.CollectionOptions{Maps: ebpf.MapOptions{PinPath: "/sys/fs/bpf/"}}); err != nil {
+		fmt.Printf("[error] failed loading eBPF objects: %v", err)
+		return
+	}
+	defer objs.Close()
+
+	// storing it to use in another functions
+	GlobalData.Xdp_ProgObj = &objs
+
+	bsMapSizeMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
+	key := uint(0)
+	size := uint(0)
+	if err := bsMapSizeMap.Update(unsafe.Pointer(&key), unsafe.Pointer(&size), ebpf.UpdateAny); err != nil {
+		fmt.Printf("[error] failed to initialize size for the backend_server_map -> [\n %s ]\n", err)
+		return
+	}
+	fmt.Printf("[info] initialize size for backend_server_map\n")
 	// Declare the routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/create_subnet", handleSubnetCreation)
 	mux.HandleFunc("/api/launch_client", handleClientLaunch)
 	mux.HandleFunc("/api/launch_lb", handleLbLaunch)
 	mux.HandleFunc("/api/launch_server", handleServerLaunch)
+	mux.HandleFunc("/api/attach_xdp", handleAttachXdp)
 	// Setup the CORS origin
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},
