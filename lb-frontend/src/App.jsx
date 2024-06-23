@@ -1,22 +1,32 @@
 import React, { Fragment, useEffect, useState } from 'react'
-
+import "axios";
+import axios from 'axios';
 const App = () => {
   const [subnet,setSubnet] = useState('');
   const [clientIp,setClientIp] = useState('');
   const [lbIp,setLbIp] = useState('');
   const [serverIp,setServerIp] = useState('');
   const handleSubnet = async (e) =>{
-    e.prevent.Default();
+    e.preventDefault();
+    const data = {
+      subnet,
+    };
+    const headers = {
+      'Content-Type':'application/json',
+    }
+    const url = "http://localhost:8080/api/create_subnet";
+    const res = await axios.post(url,data,{headers});
+    console.log(res.data);
   };
   const handleClientIp = async (e)=>{
-    e.prevent.Default();
+    e.preventDefault();
   };
   const handleLbIp = async (e) => {
-    e.prevent.Default();
+    e.preventDefault();
   };
 
   const handleServerIp = async (e) => {
-    e.prevent.Default();
+    e.preventDefault();
   };
 
   useEffect(()=>{
