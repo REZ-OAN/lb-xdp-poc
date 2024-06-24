@@ -40,6 +40,7 @@ type MacAddr struct {
 	Addr [ETH_ALEN]byte
 }
 
+// value for our bpf_maps
 type IpMac struct {
 	Ip  uint32
 	Mac MacAddr
@@ -59,7 +60,7 @@ type global_data struct {
 
 var GlobalData global_data
 
-// parseMAC parses a MAC address string and returns an EthAddr.
+// parseMAC parses a MAC address string and returns an MacAddr.
 func parseMAC(macStr string) MacAddr {
 	// Split the MAC address string by ":"
 	parts := strings.Split(macStr, ":")
@@ -315,6 +316,8 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// attach the xdp and run the tcpdump in the background to analyze network
+// which is saved in the captured_packets.pcap file (dynamically generated)
 func handleAttachXdp(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		// adding the network setup
@@ -328,7 +331,7 @@ func handleAttachXdp(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[success] successfully build xdp_lb.c and generate object file xdp_lb.o\n")
 		cmd = exec.Command("make", "attach_xdp_lb", fmt.Sprintf("IFACE=%s", GlobalData.IfaceName))
 		cmd.Dir = GlobalData.Directory
-		_, err = cmd.Output()
+		err = cmd.Start()
 		if err != nil {
 			fmt.Printf("[error] failed to attach xdp_lb.o -> [\n %s ]\n", err)
 			return
@@ -342,12 +345,63 @@ func handleAttachXdp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 }
+
+// get the map data to show on a table
+func handleGetData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	client_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.ClientMacMap
+	lb_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.LbMacMap
+	server_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.BackendServerMap
+	size_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
+
+	key := uint32(0)
+	var value IpMac
+
+	entries := make(map[uint32]IpMac)
+
+	client_map.Lookup(unsafe.Pointer(&key), unsafe.Pointer(&value))
+	entries[0] = value
+
+	lb_map.Lookup(unsafe.Pointer(&key), unsafe.Pointer(&value))
+	entries[1] = value
+
+	var size uint32
+	size_map.Lookup(unsafe.Pointer(&key), unsafe.Pointer(&size))
+
+	for i := uint32(0); i < size; i++ {
+		server_map.Lookup(unsafe.Pointer(&i), unsafe.Pointer(&value))
+		entries[i+2] = value
+	}
+	jsonData, err := json.Marshal(map[string]interface{}{"data": entries, "subnet": GlobalData.CIDR})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to marshal JSON: %v", err), http.StatusInternalServerError)
+		return
+	}
+	// Set response headers and write JSON data
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(jsonData)
+}
+
 func main() {
 	// -port <port_no>  8080 is set to default
 	port := flag.Int("port", 8080, "port to listen on")
 
 	// Parse the command-line flags
 	flag.Parse()
+
+	// creating the map pinning directory
+	cmd := exec.Command("sudo", "mkdir", "-p", "/sys/fs/bpf/tc/globals")
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("[error] failed to create pinning dir -> [\n %s ]\n", err)
+		return
+	}
+	fmt.Printf("[success] successfully created pinning dir\n")
 
 	// Get current working directory
 	cwd, err := os.Getwd()
@@ -357,11 +411,13 @@ func main() {
 	}
 	// Split path by "/"
 	pathComponents := strings.Split(cwd, "/")
-	// Change the last component to "ip_info"
+
+	// Change the last component to "" to get the root folder
 	if len(pathComponents) > 0 {
 		pathComponents[len(pathComponents)-1] = ""
 	}
-	// Join components back into a path
+
+	// Join components back into a path to get the root folder
 	appRoot := strings.Join(pathComponents, "/")
 
 	fmt.Printf("[info]  app_root_path %s\n", appRoot)
@@ -378,6 +434,7 @@ func main() {
 	// storing it to use in another functions
 	GlobalData.Xdp_ProgObj = &objs
 
+	// initialize the size_map for the backend_server_map
 	bsMapSizeMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
 	key := uint32(0)
 	size := uint32(0)
@@ -386,6 +443,7 @@ func main() {
 		return
 	}
 	fmt.Printf("[info] initialize size for backend_server_map\n")
+
 	// Declare the routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/create_subnet", handleSubnetCreation)
@@ -393,6 +451,8 @@ func main() {
 	mux.HandleFunc("/api/launch_lb", handleLbLaunch)
 	mux.HandleFunc("/api/launch_server", handleServerLaunch)
 	mux.HandleFunc("/api/attach_xdp", handleAttachXdp)
+	mux.HandleFunc("/api/get_data", handleGetData)
+
 	// Setup the CORS origin
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},
@@ -403,7 +463,7 @@ func main() {
 
 	handler := c.Handler(mux)
 
-	// Use the provided port
+	// Use the provided port to run the server
 	addr := fmt.Sprintf(":%d", *port)
 	fmt.Printf("[info] server starting on port %d\n", *port)
 	if err := http.ListenAndServe(addr, handler); err != nil {

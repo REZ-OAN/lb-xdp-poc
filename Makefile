@@ -122,6 +122,7 @@ build_obj:
 attach_xdp_lb:
 	@sudo ip link set dev $(IFACE) xdp off
 	@sudo ip link set dev $(IFACE) xdp obj ./loadbalancer/xdp/xdp_lb.o sec xdp
+	@sudo tcpdump -i $(IFACE) -w captured_packets.pcap &
 
 ## REMOVE ALL
 # remove all configs
