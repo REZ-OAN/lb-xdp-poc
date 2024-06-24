@@ -1,4 +1,4 @@
-// added all logic
+// added all logic and working and tested
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/in.h>
@@ -69,7 +69,7 @@ static __always_inline __u16 iph_csum(struct iphdr *iph)
     return csum_fold_helper(csum);
 }
 
-__u32 backend_server_index = 0;
+__u32 serverIdx = (__u32)0;
 
 SEC("xdp")
 int xdp_load_balancer(struct xdp_md *ctx)
@@ -119,45 +119,48 @@ int xdp_load_balancer(struct xdp_md *ctx)
         bpf_printk("XDP_ABORTED: client_ip_mac is NULL\n");
         return XDP_ABORTED;
     }
+  
+    if(iph->saddr == client_ip_mac->ip) {
+            if(serverIdx < *backend_map_size) {
+                bpf_printk("client to backend\n");
+                
+                __u32 idx= (__u32)serverIdx;
+                bpf_printk("recieved request from client IP : %d MAC : %x\n",client_ip_mac->ip,client_ip_mac->mac.addr);
 
-    if (iph->saddr == client_ip_mac->ip) {
-        // Client to backend
-        bpf_printk("Client to Backend - Index: %d\n", backend_server_index);
-
-        if (backend_server_index < *backend_map_size) {
-            struct ip_mac *server_ip_mac = bpf_map_lookup_elem(&backend_server_map, &backend_server_index);
-            if (server_ip_mac) {
-                __builtin_memcpy(eth->h_dest, server_ip_mac->mac.addr, ETH_ALEN);
-                iph->daddr = server_ip_mac->ip;
-                backend_server_index = (backend_server_index + 1) % (*backend_map_size);
+                struct ip_mac *backend_ip_mac = bpf_map_lookup_elem(&backend_server_map,&idx);
+                bpf_printk("serving idx %d\n",idx);
+                if(!backend_ip_mac){
+                    bpf_printk("server assignment failed\n");
+                    return XDP_ABORTED;
+                }
+                bpf_printk("serving from backend-server IP  :%d, MAC : %x \n",backend_ip_mac->ip,backend_ip_mac->mac.addr);
+                __builtin_memcpy(eth->h_dest, backend_ip_mac->mac.addr,ETH_ALEN);
+                iph->daddr = backend_ip_mac->ip;
+                serverIdx = (serverIdx + 1)%(*backend_map_size);
             } else {
-                bpf_printk("XDP_ABORTED: server_ip_mac is NULL\n");
+                bpf_printk("idx value exceeded the max_length\n");
                 return XDP_ABORTED;
             }
-        } else {
-            bpf_printk("XDP_ABORTED: Invalid backend_server_index\n");
+    } else {
+        __u32 idx = (__u32)serverIdx;
+        struct ip_mac *backend_ip_mac = bpf_map_lookup_elem(&backend_server_map,&idx);
+        if(!backend_ip_mac){
+            bpf_printk("not found any server with this idx %d\n",idx);
             return XDP_ABORTED;
         }
-    } else {
-        bpf_printk("Backend to Client\n");
-        struct ip_mac *client_ip_mac2 = bpf_map_lookup_elem(&client_mac_map, &key);
-        if(client_ip_mac2){
-        __builtin_memcpy(eth->h_dest, client_ip_mac->mac.addr, ETH_ALEN);
+        bpf_printk("backend to client\n");
+        __builtin_memcpy(eth->h_dest, client_ip_mac->mac.addr,ETH_ALEN);
         iph->daddr = client_ip_mac->ip;
-        }else {
-            bpf_printk("client not found\n");
-        }
-    }
 
-    struct ip_mac *lb_ip_mac = bpf_map_lookup_elem(&lb_mac_map, &key);
-    if (lb_ip_mac) {
-        __builtin_memcpy(eth->h_source, lb_ip_mac->mac.addr, ETH_ALEN);
-        iph->saddr = lb_ip_mac->ip;
-    } else {
-        bpf_printk("XDP_ABORTED: lb_ip_mac is NULL\n");
+    }
+    struct ip_mac *lb_ip_mac = bpf_map_lookup_elem(&lb_mac_map,&key);
+    if(!lb_ip_mac){
+        bpf_printk("loadbalancing server not availabe\n");
         return XDP_ABORTED;
     }
-
+    bpf_printk("changing source to lb-server %x\n",lb_ip_mac->mac.addr);
+     __builtin_memcpy(eth->h_source, lb_ip_mac->mac.addr,ETH_ALEN);
+    iph->saddr = lb_ip_mac->ip;
     // Recompute IP checksum
     iph->check = iph_csum(iph);
     

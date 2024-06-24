@@ -92,7 +92,7 @@ func parseIP(ipStr string) uint32 {
 		if octet < 0 || octet > 255 {
 			fmt.Printf("Invalid octet value: %s\n", parts[i])
 		}
-		ip |= uint32(octet) << (uint(i) * 8)
+		ip += uint32(octet) << (uint(i) * 8)
 	}
 	return ip
 }
@@ -174,7 +174,7 @@ func handleClientLaunch(w http.ResponseWriter, r *http.Request) {
 		parsedMac := parseMAC(GlobalData.ClientMac)
 		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
 		fmt.Printf("parsedIp : %d\n", parsedIp)
-		fmt.Printf("parsedMac: %v\n", parsedMac)
+		fmt.Printf("parsedMac: %x\n", parsedMac)
 
 		clientMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.ClientMacMap
 		key := uint32(0)
@@ -229,7 +229,7 @@ func handleLbLaunch(w http.ResponseWriter, r *http.Request) {
 		parsedMac := parseMAC(GlobalData.LbMac)
 		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
 		fmt.Printf("parsedIp : %d\n", parsedIp)
-		fmt.Printf("parsedMac: %v\n", parsedMac)
+		fmt.Printf("parsedMac: %x\n", parsedMac)
 
 		lbMacMap := GlobalData.Xdp_ProgObj.xdp_lbMaps.LbMacMap
 		key := uint32(0)
@@ -282,7 +282,7 @@ func handleServerLaunch(w http.ResponseWriter, r *http.Request) {
 		parsedMac := parseMAC(strings.TrimSpace(string(Output)))
 		ipMac := IpMac{Ip: parsedIp, Mac: parsedMac}
 		fmt.Printf("parsedIp : %d\n", parsedIp)
-		fmt.Printf("parsedMac: %v\n", parsedMac)
+		fmt.Printf("parsedMac: %x\n", parsedMac)
 
 		// get the current size
 		size_map := GlobalData.Xdp_ProgObj.xdp_lbMaps.BsMapSizeMap
